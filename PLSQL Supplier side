@@ -1,0 +1,1283 @@
+--supplier profile--
+--supplier my profile page--
+-- Procedure to retrieve supplier profile information
+CREATE OR REPLACE PROCEDURE GET_SUPPLIER_PROFILE (
+    p_supplier_id IN NUMBER,
+    p_first_name OUT VARCHAR2,
+    p_last_name OUT VARCHAR2,
+    p_email OUT VARCHAR2,
+    p_phone_number OUT VARCHAR2,
+    p_address OUT VARCHAR2,
+    p_business_name OUT VARCHAR2,
+    p_business_type OUT VARCHAR2,
+    p_result OUT NUMBER
+) AS
+BEGIN
+    p_result := 0;
+    
+    BEGIN
+        SELECT 
+            FirstName, 
+            LastName, 
+            Email, 
+            PhoneNumber, 
+            Address, 
+            BusinessName, 
+            BusinessType
+        INTO 
+            p_first_name, 
+            p_last_name, 
+            p_email, 
+            p_phone_number, 
+            p_address, 
+            p_business_name, 
+            p_business_type
+        FROM 
+            SUPPLIERS
+        WHERE 
+            SupplierID = p_supplier_id;
+            
+        p_result := 1;
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            p_result := 0;
+        WHEN OTHERS THEN
+            p_result := 0;
+    END;
+END GET_SUPPLIER_PROFILE;
+/
+
+-- Procedure to verify supplier password
+CREATE OR REPLACE PROCEDURE VERIFY_SUPPLIER_PASSWORD (
+    p_supplier_id IN NUMBER,
+    p_password IN VARCHAR2,
+    p_is_valid OUT NUMBER
+) AS
+    v_stored_password VARCHAR2(100);
+BEGIN
+    p_is_valid := 0;
+    
+    BEGIN
+        SELECT Password
+        INTO v_stored_password
+        FROM SUPPLIERS
+        WHERE SupplierID = p_supplier_id;
+        
+        IF v_stored_password = p_password THEN
+            p_is_valid := 1;
+        ELSE
+            p_is_valid := 0;
+        END IF;
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            p_is_valid := 0;
+        WHEN OTHERS THEN
+            p_is_valid := 0;
+    END;
+END VERIFY_SUPPLIER_PASSWORD;
+/
+
+-- Procedure to update supplier profile
+CREATE OR REPLACE PROCEDURE UPDATE_SUPPLIER_PROFILE (
+    p_supplier_id IN NUMBER,
+    p_first_name IN VARCHAR2,
+    p_last_name IN VARCHAR2,
+    p_email IN VARCHAR2,
+    p_phone_number IN VARCHAR2,
+    p_address IN VARCHAR2,
+    p_business_name IN VARCHAR2,
+    p_business_type IN VARCHAR2,
+    p_password IN VARCHAR2 DEFAULT NULL,
+    p_update_password IN NUMBER DEFAULT 0,
+    p_result OUT NUMBER
+) AS
+    v_email_count NUMBER;
+BEGIN
+    p_result := 0;
+    
+    -- Check if email already exists for another supplier
+    SELECT COUNT(*)
+    INTO v_email_count
+    FROM SUPPLIERS
+    WHERE Email = p_email
+    AND SupplierID != p_supplier_id;
+    
+    IF v_email_count > 0 THEN
+        p_result := 0; -- Email already in use by another supplier
+        RETURN;
+    END IF;
+    
+    BEGIN
+        IF p_update_password = 1 AND p_password IS NOT NULL THEN
+            -- Update with new password
+            UPDATE SUPPLIERS
+            SET 
+                FirstName = p_first_name,
+                LastName = p_last_name,
+                Email = p_email,
+                PhoneNumber = p_phone_number,
+                Password = p_password,
+                Address = p_address,
+                BusinessName = p_business_name,
+                BusinessType = p_business_type
+            WHERE 
+                SupplierID = p_supplier_id;
+        ELSE
+            -- Update without changing password
+            UPDATE SUPPLIERS
+            SET 
+                FirstName = p_first_name,
+                LastName = p_last_name,
+                Email = p_email,
+                PhoneNumber = p_phone_number,
+                Address = p_address,
+                BusinessName = p_business_name,
+                BusinessType = p_business_type
+            WHERE 
+                SupplierID = p_supplier_id;
+        END IF;
+        
+        IF SQL%ROWCOUNT > 0 THEN
+            p_result := 1; -- Success
+            COMMIT;
+        ELSE
+            p_result := 0; -- No rows updated
+            ROLLBACK;
+        END IF;
+    EXCEPTION
+        WHEN OTHERS THEN
+            p_result := 0; -- Error occurred
+            ROLLBACK;
+    END;
+END UPDATE_SUPPLIER_PROFILE;
+/
+
+
+--dashboard--
+--dashboard--
+-- Procedure to get supplier name
+CREATE OR REPLACE PROCEDURE GET_SUPPLIER_NAME_TO_DASHBOARD(
+    p_supplier_id IN NUMBER,
+    p_supplier_name OUT VARCHAR2
+)
+AS
+BEGIN
+    SELECT FIRSTNAME || ' ' || LASTNAME || ' (' || BUSINESSNAME || ')'
+    INTO p_supplier_name
+    FROM SUPPLIERS
+    WHERE SUPPLIERID = p_supplier_id;
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        p_supplier_name := 'Unknown Supplier';
+    WHEN OTHERS THEN
+        p_supplier_name := 'Unknown Supplier';
+END GET_SUPPLIER_NAME_TO_DASHBOARD;
+/
+
+
+-- Procedure to get recent orders
+CREATE OR REPLACE PROCEDURE GET_SUPPLIER_RECENT_ORDERS(
+    p_supplier_id IN NUMBER,
+    p_cursor OUT SYS_REFCURSOR
+)
+AS
+BEGIN
+    OPEN p_cursor FOR
+        SELECT DISTINCT O.ORDERID, 
+               C.FIRSTNAME || ' ' || C.LASTNAME AS CUSTOMERNAME, 
+               O.ORDERDATE, 
+               O.TOTALAMOUNT, 
+               O.ORDERSTATUS
+        FROM ORDERS O
+        JOIN ORDERITEMS OI ON O.ORDERID = OI.ORDERID
+        JOIN PRODUCTS P ON OI.PRODUCTID = P.PRODUCTID
+        JOIN CUSTOMERS C ON O.CUSTOMERID = C.CUSTOMERID
+        WHERE P.SUPPLIERID = p_supplier_id
+        ORDER BY O.ORDERDATE DESC
+        FETCH FIRST 5 ROWS ONLY;
+EXCEPTION
+    WHEN OTHERS THEN
+        RAISE;
+END GET_SUPPLIER_RECENT_ORDERS;
+/
+
+-- Procedure to get low stock products
+CREATE OR REPLACE PROCEDURE GET_LOW_STOCK_PRODUCTS(
+    p_supplier_id IN NUMBER,
+    p_cursor OUT SYS_REFCURSOR
+)
+AS
+BEGIN
+    OPEN p_cursor FOR
+        SELECT P.PRODUCTID, 
+               P.PRODUCTNAME, 
+               C.CATEGORYNAME, 
+               P.QUANTITYAVAILABLE
+        FROM PRODUCTS P
+        JOIN CATEGORIES C ON P.CATEGORYID = C.CATEGORYID
+        WHERE P.SUPPLIERID = p_supplier_id
+        AND P.ISACTIVE = 1
+        AND P.QUANTITYAVAILABLE <= 10 -- Threshold for low stock
+        ORDER BY P.QUANTITYAVAILABLE ASC;
+EXCEPTION
+    WHEN OTHERS THEN
+        RAISE;
+END GET_LOW_STOCK_PRODUCTS;
+/
+
+-- Complete the GET_SUPPLIER_SALES_CHART_DATA procedure that was cut off
+CREATE OR REPLACE PROCEDURE GET_SUPPLIER_SALES_CHART_DATA(
+    p_supplier_id IN NUMBER,
+    p_cursor OUT SYS_REFCURSOR
+)
+AS
+BEGIN
+    OPEN p_cursor FOR
+        WITH MONTHS AS (
+            SELECT TO_CHAR(ADD_MONTHS(TRUNC(SYSDATE, 'MM'), -5 + LEVEL), 'MM') AS MONTH_NUM,
+                   TO_CHAR(ADD_MONTHS(TRUNC(SYSDATE, 'MM'), -5 + LEVEL), 'MON') AS MONTH_NAME,
+                   ADD_MONTHS(TRUNC(SYSDATE, 'MM'), -5 + LEVEL) AS MONTH_START,
+                   ADD_MONTHS(TRUNC(SYSDATE, 'MM'), -4 + LEVEL) AS MONTH_END
+            FROM DUAL
+            CONNECT BY LEVEL <= 6
+        )
+        SELECT M.MONTH_NAME,
+               NVL(SUM(OI.PRICE * OI.QUANTITY), 0) AS SALES_AMOUNT
+        FROM MONTHS M
+        LEFT JOIN ORDERS O ON O.ORDERDATE >= M.MONTH_START AND O.ORDERDATE < M.MONTH_END
+        LEFT JOIN ORDERITEMS OI ON O.ORDERID = OI.ORDERID
+        LEFT JOIN PRODUCTS P ON OI.PRODUCTID = P.PRODUCTID
+        WHERE P.SUPPLIERID = p_supplier_id OR P.SUPPLIERID IS NULL
+        GROUP BY M.MONTH_NAME, M.MONTH_NUM
+        ORDER BY TO_NUMBER(M.MONTH_NUM);
+EXCEPTION
+    WHEN OTHERS THEN
+        RAISE;
+END GET_SUPPLIER_SALES_CHART_DATA;
+/
+
+-- Create the GET_SUPPLIER_CATEGORY_CHART_DATA procedure that's referenced in the C# code
+CREATE OR REPLACE PROCEDURE GET_SUPPLIER_CATEGORY_CHART_DATA(
+    p_supplier_id IN NUMBER,
+    p_cursor OUT SYS_REFCURSOR
+)
+AS
+BEGIN
+    OPEN p_cursor FOR
+        SELECT C.CATEGORYNAME AS CATEGORY_NAME, 
+               COUNT(P.PRODUCTID) AS PRODUCT_COUNT
+        FROM CATEGORIES C
+        JOIN PRODUCTS P ON C.CATEGORYID = P.CATEGORYID
+        WHERE P.SUPPLIERID = p_supplier_id
+        AND P.ISACTIVE = 1
+        AND C.ISACTIVE = 1
+        GROUP BY C.CATEGORYNAME
+        ORDER BY PRODUCT_COUNT DESC;
+EXCEPTION
+    WHEN OTHERS THEN
+        RAISE;
+END GET_SUPPLIER_CATEGORY_CHART_DATA;
+/
+
+--Category--
+--New category procedures--
+-- Create procedure to get all categories
+CREATE OR REPLACE PROCEDURE GET_ALL_CATEGORIES(
+    p_cursor OUT SYS_REFCURSOR
+)
+AS
+BEGIN
+    OPEN p_cursor FOR
+        SELECT CategoryId, CategoryName, Description, ImagePath, IsActive, CreatedDate, ModifiedDate
+        FROM Categories
+        ORDER BY CategoryName;
+EXCEPTION
+    WHEN OTHERS THEN
+        RAISE;
+END GET_ALL_CATEGORIES;
+/
+
+-- Create procedure to get category by ID
+CREATE OR REPLACE PROCEDURE GET_CATEGORY_BY_ID(
+    p_category_id IN NUMBER,
+    p_cursor OUT SYS_REFCURSOR
+)
+AS
+BEGIN
+    OPEN p_cursor FOR
+        SELECT CategoryId, CategoryName, Description, ImagePath, IsActive, CreatedDate, ModifiedDate
+        FROM Categories
+        WHERE CategoryId = p_category_id;
+EXCEPTION
+    WHEN OTHERS THEN
+        RAISE;
+END GET_CATEGORY_BY_ID;
+/
+
+-- Create procedure to insert new category
+CREATE OR REPLACE PROCEDURE INSERT_CATEGORY(
+    p_category_name IN VARCHAR2,
+    p_description IN VARCHAR2,
+    p_image_path IN VARCHAR2,
+    p_is_active IN NUMBER,
+    p_result OUT NUMBER
+)
+AS
+    v_category_exists NUMBER;
+BEGIN
+    -- Check if category name already exists
+    SELECT COUNT(*) INTO v_category_exists
+    FROM Categories
+    WHERE UPPER(CategoryName) = UPPER(p_category_name);
+    
+    IF v_category_exists > 0 THEN
+        p_result := 0; -- Category with same name already exists
+    ELSE
+        -- Insert new category
+        INSERT INTO Categories (CategoryName, Description, ImagePath, IsActive, CreatedDate)
+        VALUES (p_category_name, p_description, p_image_path, p_is_active, SYSTIMESTAMP)
+        RETURNING CategoryId INTO p_result;
+        
+        COMMIT;
+    END IF;
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK;
+        p_result := 0;
+        RAISE;
+END INSERT_CATEGORY;
+/
+
+-- Create procedure to update existing category
+CREATE OR REPLACE PROCEDURE UPDATE_CATEGORY(
+    p_category_id IN NUMBER,
+    p_category_name IN VARCHAR2,
+    p_description IN VARCHAR2,
+    p_image_path IN VARCHAR2,
+    p_is_active IN NUMBER,
+    p_result OUT NUMBER
+)
+AS
+    v_category_exists NUMBER;
+BEGIN
+    -- Check if another category with the same name exists (exclude current category)
+    SELECT COUNT(*) INTO v_category_exists
+    FROM Categories
+    WHERE UPPER(CategoryName) = UPPER(p_category_name)
+    AND CategoryId != p_category_id;
+    
+    IF v_category_exists > 0 THEN
+        p_result := 0; -- Category with same name already exists
+    ELSE
+        -- Update category
+        UPDATE Categories
+        SET CategoryName = p_category_name,
+            Description = p_description,
+            ImagePath = p_image_path,
+            IsActive = p_is_active,
+            ModifiedDate = SYSTIMESTAMP
+        WHERE CategoryId = p_category_id;
+        
+        IF SQL%ROWCOUNT > 0 THEN
+            p_result := p_category_id;
+            COMMIT;
+        ELSE
+            p_result := 0; -- No rows updated
+        END IF;
+    END IF;
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK;
+        p_result := 0;
+        RAISE;
+END UPDATE_CATEGORY;
+/
+
+-- Create procedure to delete category
+CREATE OR REPLACE PROCEDURE DELETE_CATEGORY(
+    p_category_id IN NUMBER,
+    p_result OUT NUMBER
+)
+AS
+BEGIN
+    -- Check if category is used in any products (assuming there's a Products table with CategoryId)
+    -- Uncomment and modify this section based on your actual data model
+    /*
+    DECLARE
+        v_product_count NUMBER;
+    BEGIN
+        SELECT COUNT(*) INTO v_product_count
+        FROM Products
+        WHERE CategoryId = p_category_id;
+        
+        IF v_product_count > 0 THEN
+            p_result := 0; -- Category is in use and cannot be deleted
+            RETURN;
+        END IF;
+    END;
+    */
+    
+    -- Delete category
+    DELETE FROM Categories
+    WHERE CategoryId = p_category_id;
+    
+    IF SQL%ROWCOUNT > 0 THEN
+        p_result := p_category_id;
+        COMMIT;
+    ELSE
+        p_result := 0; -- No rows deleted
+    END IF;
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK;
+        p_result := 0;
+        RAISE;
+END DELETE_CATEGORY;
+/
+
+
+--Product page--
+--new updated plsql for product--
+-- Procedure to get all categories
+CREATE OR REPLACE PROCEDURE GET_CATEGORIES_TO_PRODUCT(
+    p_cursor OUT SYS_REFCURSOR
+)
+AS
+BEGIN
+    OPEN p_cursor FOR
+        SELECT CategoryID, CategoryName 
+        FROM Categories 
+        ORDER BY CategoryName;
+END;
+/
+
+-- Procedure to get products by supplier ID
+CREATE OR REPLACE PROCEDURE GET_SUPPLIER_PRODUCTS(
+    p_supplier_id IN NUMBER,
+    p_cursor OUT SYS_REFCURSOR
+)
+AS
+BEGIN
+    OPEN p_cursor FOR
+        SELECT p.ProductID, p.ProductName, c.CategoryName, p.Price, 
+               p.QuantityAvailable, p.ImageURL, p.IsActive, p.IsFeatured
+        FROM Products p
+        JOIN Categories c ON p.CategoryID = c.CategoryID
+        WHERE p.SupplierID = p_supplier_id
+        ORDER BY p.ProductID DESC;
+END;
+/
+
+-- Procedure to insert a new product
+CREATE OR REPLACE PROCEDURE INSERT_PRODUCT(
+    p_supplier_id IN NUMBER,
+    p_category_id IN NUMBER,
+    p_product_name IN VARCHAR2,
+    p_description IN VARCHAR2,
+    p_price IN NUMBER,
+    p_quantity IN NUMBER,
+    p_is_active IN NUMBER,
+    p_is_featured IN NUMBER,
+    p_image_url IN VARCHAR2,
+    p_product_id OUT NUMBER
+)
+AS
+BEGIN
+    INSERT INTO Products (
+        SupplierID, CategoryID, ProductName, Description, 
+        Price, QuantityAvailable, IsActive, IsFeatured, ImageURL
+    ) VALUES (
+        p_supplier_id, p_category_id, p_product_name, p_description, 
+        p_price, p_quantity, p_is_active, p_is_featured, p_image_url
+    )
+    RETURNING ProductID INTO p_product_id;
+    
+    COMMIT;
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK;
+        RAISE;
+END;
+/
+
+-- Procedure to update an existing product (with image)
+CREATE OR REPLACE PROCEDURE UPDATE_PRODUCT_WITH_IMAGE(
+    p_product_id IN NUMBER,
+    p_category_id IN NUMBER,
+    p_product_name IN VARCHAR2,
+    p_description IN VARCHAR2,
+    p_price IN NUMBER,
+    p_quantity IN NUMBER,
+    p_is_active IN NUMBER,
+    p_is_featured IN NUMBER,
+    p_image_url IN VARCHAR2
+)
+AS
+BEGIN
+    UPDATE Products 
+    SET CategoryID = p_category_id,
+        ProductName = p_product_name,
+        Description = p_description,
+        Price = p_price,
+        QuantityAvailable = p_quantity,
+        IsActive = p_is_active,
+        IsFeatured = p_is_featured,
+        ImageURL = p_image_url
+    WHERE ProductID = p_product_id;
+    
+    COMMIT;
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK;
+        RAISE;
+END;
+/
+
+-- Procedure to update an existing product (without image)
+CREATE OR REPLACE PROCEDURE UPDATE_PRODUCT_NO_IMAGE(
+    p_product_id IN NUMBER,
+    p_category_id IN NUMBER,
+    p_product_name IN VARCHAR2,
+    p_description IN VARCHAR2,
+    p_price IN NUMBER,
+    p_quantity IN NUMBER,
+    p_is_active IN NUMBER,
+    p_is_featured IN NUMBER
+)
+AS
+BEGIN
+    UPDATE Products 
+    SET CategoryID = p_category_id,
+        ProductName = p_product_name,
+        Description = p_description,
+        Price = p_price,
+        QuantityAvailable = p_quantity,
+        IsActive = p_is_active,
+        IsFeatured = p_is_featured
+    WHERE ProductID = p_product_id;
+    
+    COMMIT;
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK;
+        RAISE;
+END;
+/
+
+-- Procedure to get product details by ID
+CREATE OR REPLACE PROCEDURE GET_PRODUCT_DETAILS(
+    p_product_id IN NUMBER,
+    p_cursor OUT SYS_REFCURSOR
+)
+AS
+BEGIN
+    OPEN p_cursor FOR
+        SELECT CategoryID, ProductName, Description, Price, 
+               QuantityAvailable, IsActive, IsFeatured, ImageURL
+        FROM Products
+        WHERE ProductID = p_product_id;
+END;
+/
+
+-- Procedure to delete a product
+CREATE OR REPLACE PROCEDURE DELETE_PRODUCT(
+    p_product_id IN NUMBER
+)
+AS
+BEGIN
+    DELETE FROM Products WHERE ProductID = p_product_id;
+    COMMIT;
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK;
+        RAISE;
+END;
+/
+
+
+--Order management page--
+-- Procedure to get orders for a specific supplier
+CREATE OR REPLACE PROCEDURE GetSupplierOrders(
+    p_SupplierId IN NUMBER,
+    p_Status IN VARCHAR2,
+    p_FromDate IN DATE,
+    p_ToDate IN DATE,
+    p_Cursor OUT SYS_REFCURSOR
+)
+AS
+BEGIN
+    OPEN p_Cursor FOR
+    SELECT 
+        o.OrderId,
+        c.FirstName || ' ' || c.LastName AS CustomerName,
+        o.OrderDate,
+        o.TotalAmount,
+        o.OrderStatus,
+        o.PaymentMethod
+    FROM 
+        Orders o
+    JOIN 
+        Customers c ON o.CustomerId = c.CustomerId
+    JOIN 
+        OrderItems oi ON o.OrderId = oi.OrderId
+    JOIN 
+        Products p ON oi.ProductId = p.ProductId
+    WHERE 
+        p.SupplierID = p_SupplierId
+        -- Apply status filter if provided
+        AND (p_Status IS NULL OR p_Status = '' OR o.OrderStatus = p_Status)
+        -- Apply date range filter if provided
+        AND (p_FromDate IS NULL OR o.OrderDate >= p_FromDate)
+        AND (p_ToDate IS NULL OR o.OrderDate <= p_ToDate + 1) -- Add 1 day to include orders from the end date
+    GROUP BY 
+        o.OrderId, c.FirstName, c.LastName, o.OrderDate, o.TotalAmount, o.OrderStatus, o.PaymentMethod
+    ORDER BY 
+        o.OrderDate DESC;
+END GetSupplierOrders;
+/
+
+-- Procedure to get order details for a specific supplier
+CREATE OR REPLACE PROCEDURE GetSupplierOrderDetails(
+    p_OrderId IN NUMBER,
+    p_SupplierId IN NUMBER,
+    p_Cursor OUT SYS_REFCURSOR
+)
+AS
+BEGIN
+    OPEN p_Cursor FOR
+    SELECT 
+        o.OrderId,
+        o.OrderDate,
+        o.ShippingAddress,
+        o.BillingAddress,
+        o.Subtotal,
+        o.ShippingCost,
+        o.TotalAmount,
+        o.PaymentMethod,
+        o.OrderStatus,
+        c.FirstName || ' ' || c.LastName AS CustomerName,
+        c.Email AS CustomerEmail,
+        c.PhoneNumber AS CustomerPhone
+    FROM 
+        Orders o
+    JOIN 
+        Customers c ON o.CustomerId = c.CustomerId
+    JOIN 
+        OrderItems oi ON o.OrderId = oi.OrderId
+    JOIN 
+        Products p ON oi.ProductId = p.ProductId
+    WHERE 
+        o.OrderId = p_OrderId
+        AND p.SupplierID = p_SupplierId
+    GROUP BY 
+        o.OrderId, o.OrderDate, o.ShippingAddress, o.BillingAddress, 
+        o.Subtotal, o.ShippingCost, o.TotalAmount, o.PaymentMethod, o.OrderStatus,
+        c.FirstName, c.LastName, c.Email, c.PhoneNumber;
+END GetSupplierOrderDetails;
+/
+
+-- Procedure to get order items for a specific supplier
+CREATE OR REPLACE PROCEDURE GetSupplierOrderItems(
+    p_OrderId IN NUMBER,
+    p_SupplierId IN NUMBER,
+    p_Cursor OUT SYS_REFCURSOR
+)
+AS
+BEGIN
+    OPEN p_Cursor FOR
+    SELECT 
+        p.ProductName,
+        p.ImageURL AS ProductImage,
+        oi.Price,
+        oi.Quantity,
+        (oi.Price * oi.Quantity) AS Subtotal
+    FROM 
+        OrderItems oi
+    JOIN 
+        Products p ON oi.ProductId = p.ProductId
+    WHERE 
+        oi.OrderId = p_OrderId
+        AND p.SupplierID = p_SupplierId;
+END GetSupplierOrderItems;
+/
+
+-- Procedure to update order status
+CREATE OR REPLACE PROCEDURE UpdateOrderStatus(
+    p_OrderId IN NUMBER,
+    p_SupplierId IN NUMBER,
+    p_Status IN VARCHAR2,
+    p_Notes IN VARCHAR2,
+    p_Success OUT NUMBER
+)
+AS
+    v_count NUMBER;
+BEGIN
+    -- Verify that the order contains products from this supplier
+    SELECT COUNT(*) INTO v_count
+    FROM OrderItems oi
+    JOIN Products p ON oi.ProductId = p.ProductId
+    WHERE oi.OrderId = p_OrderId
+    AND p.SupplierId = p_SupplierId;
+    
+    IF v_count > 0 THEN
+        -- Update the order status
+        UPDATE Orders
+        SET OrderStatus = p_Status,
+            OrderDate = SYSDATE
+        WHERE OrderId = p_OrderId;
+        
+        -- Insert status update record if needed
+        -- You can create a separate table for order status history if required
+        
+        -- Set success flag
+        p_Success := 1;
+        COMMIT;
+    ELSE
+        p_Success := 0;
+    END IF;
+EXCEPTION
+    WHEN OTHERS THEN
+        p_Success := 0;
+        ROLLBACK;
+END UpdateOrderStatus;
+/
+
+-- Procedure to reject an order
+CREATE OR REPLACE PROCEDURE RejectOrder(
+    p_OrderId IN NUMBER,
+    p_SupplierId IN NUMBER,
+    p_Reason IN VARCHAR2,
+    p_NotifyCustomer IN NUMBER,
+    p_Success OUT NUMBER
+)
+AS
+    v_count NUMBER;
+BEGIN
+    -- Verify that the order contains products from this supplier
+    SELECT COUNT(*) INTO v_count
+    FROM OrderItems oi
+    JOIN Products p ON oi.ProductId = p.ProductId
+    WHERE oi.OrderId = p_OrderId
+    AND p.SupplierId = p_SupplierId;
+    
+    IF v_count > 0 THEN
+        -- Update the order status to Cancelled
+        UPDATE Orders
+        SET OrderStatus = 'Cancelled',
+            OrderDate = SYSDATE
+        WHERE OrderId = p_OrderId;
+        
+        -- Here you would add code to log the rejection reason
+        -- And send email notification to customer if requested
+        
+        p_Success := 1;
+        COMMIT;
+    ELSE
+        p_Success := 0;
+    END IF;
+EXCEPTION
+    WHEN OTHERS THEN
+        p_Success := 0;
+        ROLLBACK;
+END RejectOrder;
+/
+
+-- Procedure to confirm an order
+CREATE OR REPLACE PROCEDURE ConfirmOrder(
+    p_OrderId IN NUMBER,
+    p_SupplierId IN NUMBER,
+    p_EstimatedDelivery IN DATE,
+    p_Notes IN VARCHAR2,
+    p_SendConfirmation IN NUMBER,
+    p_Success OUT NUMBER
+)
+AS
+    v_count NUMBER;
+BEGIN
+    -- Verify that the order contains products from this supplier
+    SELECT COUNT(*) INTO v_count
+    FROM OrderItems oi
+    JOIN Products p ON oi.ProductId = p.ProductId
+    WHERE oi.OrderId = p_OrderId
+    AND p.SupplierId = p_SupplierId;
+    
+    IF v_count > 0 THEN
+        -- Update the order status to Confirmed
+        UPDATE Orders
+        SET OrderStatus = 'Confirmed',
+            OrderDate = SYSDATE
+        WHERE OrderId = p_OrderId;
+        
+        -- Here you would add code to store estimated delivery date
+        -- and send confirmation email to customer if requested
+        
+        p_Success := 1;
+        COMMIT;
+    ELSE
+        p_Success := 0;
+    END IF;
+EXCEPTION
+    WHEN OTHERS THEN
+        p_Success := 0;
+        ROLLBACK;
+END ConfirmOrder;
+
+/
+
+
+
+--Delivery page--
+-- Procedure to get delivery requests for a supplier
+CREATE OR REPLACE PROCEDURE GetSupplierDeliveries(
+    p_SupplierID IN NUMBER,
+    p_Status IN VARCHAR2,
+    p_Cursor OUT SYS_REFCURSOR
+)
+AS
+BEGIN
+    OPEN p_Cursor FOR
+    SELECT 
+        d.DeliveryID,
+        d.OrderID,
+        c.FirstName || ' ' || c.LastName AS CustomerName,
+        o.ShippingAddress AS Address,
+        d.RequestDate,
+        d.Status,
+        d.DeliveryDate
+    FROM 
+        Deliveries d
+    JOIN 
+        Orders o ON d.OrderID = o.OrderID
+    JOIN 
+        Customers c ON o.CustomerID = c.CustomerID
+    JOIN 
+        OrderItems oi ON o.OrderID = oi.OrderID
+    JOIN 
+        Products p ON oi.ProductID = p.ProductID
+    WHERE 
+        p.SupplierID = p_SupplierID
+        AND (p_Status IS NULL OR p_Status = '' OR d.Status = p_Status)
+    GROUP BY 
+        d.DeliveryID, d.OrderID, c.FirstName, c.LastName, o.ShippingAddress, 
+        d.RequestDate, d.Status, d.DeliveryDate
+    ORDER BY 
+        d.RequestDate DESC;
+END GetSupplierDeliveries;
+/
+
+-- Procedure to get delivery details
+CREATE OR REPLACE PROCEDURE GetDeliveryDetails(
+    p_DeliveryID IN NUMBER,
+    p_SupplierID IN NUMBER,
+    p_Cursor OUT SYS_REFCURSOR
+)
+AS
+BEGIN
+    OPEN p_Cursor FOR
+    SELECT 
+        d.DeliveryID,
+        d.OrderID,
+        c.FirstName || ' ' || c.LastName AS CustomerName,
+        c.PhoneNumber AS Contact,
+        o.ShippingAddress AS Address,
+        d.RequestDate,
+        d.DeliveryDate,
+        d.Status,
+        d.Notes
+    FROM 
+        Deliveries d
+    JOIN 
+        Orders o ON d.OrderID = o.OrderID
+    JOIN 
+        Customers c ON o.CustomerID = c.CustomerID
+    JOIN 
+        OrderItems oi ON o.OrderID = oi.OrderID
+    JOIN 
+        Products p ON oi.ProductID = p.ProductID
+    WHERE 
+        d.DeliveryID = p_DeliveryID
+        AND p.SupplierID = p_SupplierID
+    GROUP BY 
+        d.DeliveryID, d.OrderID, c.FirstName, c.LastName, c.PhoneNumber, 
+        o.ShippingAddress, d.RequestDate, d.DeliveryDate, d.Status, d.Notes;
+END GetDeliveryDetails;
+/
+
+-- Procedure to get delivery items
+CREATE OR REPLACE PROCEDURE GetDeliveryItems(
+    p_DeliveryID IN NUMBER,
+    p_SupplierID IN NUMBER,
+    p_Cursor OUT SYS_REFCURSOR
+)
+AS
+BEGIN
+    OPEN p_Cursor FOR
+    SELECT 
+        p.ProductID AS ItemID,
+        p.ProductName,
+        oi.Quantity,
+        oi.Price,
+        (oi.Price * oi.Quantity) AS Subtotal
+    FROM 
+        Deliveries d
+    JOIN 
+        Orders o ON d.OrderID = o.OrderID
+    JOIN 
+        OrderItems oi ON o.OrderID = oi.OrderID
+    JOIN 
+        Products p ON oi.ProductID = p.ProductID
+    WHERE 
+        d.DeliveryID = p_DeliveryID
+        AND p.SupplierID = p_SupplierID;
+END GetDeliveryItems;
+/
+
+-- Procedure to update delivery status
+CREATE OR REPLACE PROCEDURE UpdateDeliveryStatus(
+    p_DeliveryID IN NUMBER,
+    p_SupplierID IN NUMBER,
+    p_Status IN VARCHAR2,
+    p_DeliveryDate IN DATE,
+    p_Notes IN VARCHAR2,
+    p_Success OUT NUMBER
+)
+AS
+    v_count NUMBER;
+BEGIN
+    -- Verify that the delivery is associated with this supplier's products
+    SELECT COUNT(*) INTO v_count
+    FROM Deliveries d
+    JOIN Orders o ON d.OrderID = o.OrderID
+    JOIN OrderItems oi ON o.OrderID = oi.OrderID
+    JOIN Products p ON oi.ProductID = p.ProductID
+    WHERE d.DeliveryID = p_DeliveryID
+    AND p.SupplierID = p_SupplierID;
+    
+    IF v_count > 0 THEN
+        -- Update the delivery status
+        UPDATE Deliveries
+        SET Status = p_Status,
+            DeliveryDate = p_DeliveryDate,
+            Notes = p_Notes
+        WHERE DeliveryID = p_DeliveryID;
+        
+        p_Success := 1;
+        COMMIT;
+    ELSE
+        p_Success := 0;
+    END IF;
+EXCEPTION
+    WHEN OTHERS THEN
+        p_Success := 0;
+        ROLLBACK;
+END UpdateDeliveryStatus;
+/
+
+-- Procedure to create a new delivery
+CREATE OR REPLACE PROCEDURE CreateDelivery(
+    p_OrderID IN NUMBER,
+    p_RequestDate IN DATE,
+    p_DeliveryDate IN DATE,
+    p_Status IN VARCHAR2,
+    p_Notes IN VARCHAR2,
+    p_DeliveryID OUT NUMBER
+)
+AS
+BEGIN
+    INSERT INTO Deliveries(
+        OrderID,
+        RequestDate,
+        DeliveryDate,
+        Status,
+        Notes
+    ) VALUES (
+        p_OrderID,
+        NVL(p_RequestDate, SYSDATE),
+        p_DeliveryDate,
+        NVL(p_Status, 'Pending'),
+        p_Notes
+    ) RETURNING DeliveryID INTO p_DeliveryID;
+    
+    COMMIT;
+EXCEPTION
+    WHEN OTHERS THEN
+        p_DeliveryID := 0;
+        ROLLBACK;
+END CreateDelivery;
+/
+
+CREATE OR REPLACE TRIGGER trg_create_delivery_after_order
+AFTER INSERT ON Orders
+FOR EACH ROW
+BEGIN
+    -- Create a delivery record for the new order
+    INSERT INTO Deliveries (
+        OrderID,
+        RequestDate,
+        Status
+    ) VALUES (
+        :NEW.OrderID,
+        SYSDATE,
+        'Pending');
+END;
+/
+
+
+--Report page--
+--report page--
+-- 1. Get supplier monthly sales summary
+CREATE OR REPLACE PROCEDURE GetSupplierMonthlySales(
+    p_SupplierID IN NUMBER,
+    p_FromDate IN DATE DEFAULT ADD_MONTHS(SYSDATE, -1),
+    p_ToDate IN DATE DEFAULT SYSDATE,
+    p_TotalSales OUT NUMBER,
+    p_TotalOrders OUT NUMBER
+) AS
+BEGIN
+    -- Get total sales amount
+    SELECT NVL(SUM(oi.Price * oi.Quantity), 0)
+    INTO p_TotalSales
+    FROM OrderItems oi
+    JOIN Orders o ON oi.OrderID = o.OrderID
+    JOIN Products p ON oi.ProductID = p.ProductID
+    WHERE p.SupplierID = p_SupplierID
+    AND o.OrderDate BETWEEN p_FromDate AND p_ToDate;
+    
+    -- Get total order count
+    SELECT COUNT(DISTINCT o.OrderID)
+    INTO p_TotalOrders
+    FROM Orders o
+    JOIN OrderItems oi ON o.OrderID = oi.OrderID
+    JOIN Products p ON oi.ProductID = p.ProductID
+    WHERE p.SupplierID = p_SupplierID
+    AND o.OrderDate BETWEEN p_FromDate AND p_ToDate;
+END GetSupplierMonthlySales;
+/
+
+-- 2. Get supplier active products count
+CREATE OR REPLACE PROCEDURE GetSupplierActiveProducts(
+    p_SupplierID IN NUMBER,
+    p_ActiveCount OUT NUMBER
+) AS
+BEGIN
+    SELECT COUNT(*)
+    INTO p_ActiveCount
+    FROM Products
+    WHERE SupplierID = p_SupplierID
+    AND IsActive = 1;
+END GetSupplierActiveProducts;
+/
+
+-- 3. Get supplier top selling products
+CREATE OR REPLACE PROCEDURE GetSupplierTopProducts(
+    p_SupplierID IN NUMBER,
+    p_FromDate IN DATE DEFAULT ADD_MONTHS(SYSDATE, -1),
+    p_ToDate IN DATE DEFAULT SYSDATE,
+    p_Cursor OUT SYS_REFCURSOR
+) AS
+BEGIN
+    OPEN p_Cursor FOR
+    SELECT 
+        p.ProductID,
+        p.ProductName,
+        SUM(oi.Quantity) AS TotalQuantity,
+        SUM(oi.Price * oi.Quantity) AS TotalSales
+    FROM 
+        Products p
+    JOIN 
+        OrderItems oi ON p.ProductID = oi.ProductID
+    JOIN 
+        Orders o ON oi.OrderID = o.OrderID
+    WHERE 
+        p.SupplierID = p_SupplierID
+        AND o.OrderDate BETWEEN p_FromDate AND p_ToDate
+    GROUP BY 
+        p.ProductID, p.ProductName
+    ORDER BY 
+        TotalSales DESC;
+END GetSupplierTopProducts;
+/
+
+-- 4. Get supplier sales by category
+CREATE OR REPLACE PROCEDURE GetSupplierCategorySales(
+    p_SupplierID IN NUMBER,
+    p_FromDate IN DATE DEFAULT ADD_MONTHS(SYSDATE, -1),
+    p_ToDate IN DATE DEFAULT SYSDATE,
+    p_Cursor OUT SYS_REFCURSOR
+) AS
+BEGIN
+    OPEN p_Cursor FOR
+    SELECT 
+        c.CategoryID,
+        c.CategoryName,
+        COUNT(DISTINCT p.ProductID) AS ProductCount,
+        SUM(oi.Price * oi.Quantity) AS TotalSales
+    FROM 
+        Categories c
+    JOIN 
+        Products p ON c.CategoryID = p.CategoryID
+    JOIN 
+        OrderItems oi ON p.ProductID = oi.ProductID
+    JOIN 
+        Orders o ON oi.OrderID = o.OrderID
+    WHERE 
+        p.SupplierID = p_SupplierID
+        AND o.OrderDate BETWEEN p_FromDate AND p_ToDate
+    GROUP BY 
+        c.CategoryID, c.CategoryName
+    ORDER BY 
+        TotalSales DESC;
+END GetSupplierCategorySales;
+/
+
+-- 5. Get supplier recent orders
+CREATE OR REPLACE PROCEDURE GetSupplierRecentOrders(
+    p_SupplierID IN NUMBER,
+    p_FromDate IN DATE DEFAULT ADD_MONTHS(SYSDATE, -1),
+    p_ToDate IN DATE DEFAULT SYSDATE,
+    p_Cursor OUT SYS_REFCURSOR
+) AS
+BEGIN
+    OPEN p_Cursor FOR
+    SELECT 
+        o.OrderID,
+        c.FirstName || ' ' || c.LastName AS CustomerName,
+        o.OrderDate,
+        SUM(oi.Price * oi.Quantity) AS TotalAmount,
+        o.OrderStatus AS Status
+    FROM 
+        Orders o
+    JOIN 
+        Customers c ON o.CustomerID = c.CustomerID
+    JOIN 
+        OrderItems oi ON o.OrderID = oi.OrderID
+    JOIN 
+        Products p ON oi.ProductID = p.ProductID
+    WHERE 
+        p.SupplierID = p_SupplierID
+        AND o.OrderDate BETWEEN p_FromDate AND p_ToDate
+    GROUP BY 
+        o.OrderID, c.FirstName, c.LastName, o.OrderDate, o.OrderStatus
+    ORDER BY 
+        o.OrderDate DESC;
+END GetSupplierRecentOrders;
+/
+
+-- 6. Get supplier sales trend data
+CREATE OR REPLACE PROCEDURE GetSupplierSalesTrend(
+    p_SupplierID IN NUMBER,
+    p_FromDate IN DATE DEFAULT ADD_MONTHS(SYSDATE, -1),
+    p_ToDate IN DATE DEFAULT SYSDATE,
+    p_Cursor OUT SYS_REFCURSOR
+) AS
+BEGIN
+    OPEN p_Cursor FOR
+    SELECT 
+        TRUNC(o.OrderDate) AS OrderDate,
+        SUM(oi.Price * oi.Quantity) AS DailySales,
+        COUNT(DISTINCT o.OrderID) AS OrderCount
+    FROM 
+        Orders o
+    JOIN 
+        OrderItems oi ON o.OrderID = oi.OrderID
+    JOIN 
+        Products p ON oi.ProductID = p.ProductID
+    WHERE 
+        p.SupplierID = p_SupplierID
+        AND o.OrderDate BETWEEN p_FromDate AND p_ToDate
+    GROUP BY 
+        TRUNC(o.OrderDate)
+    ORDER BY 
+        TRUNC(o.OrderDate);
+END GetSupplierSalesTrend;
+/
+
+-- 7. Get supplier average rating
+CREATE OR REPLACE PROCEDURE GetSupplierAverageRating(
+    p_SupplierID IN NUMBER,
+    p_AverageRating OUT NUMBER
+) AS
+BEGIN
+    -- Assuming we had a ratings table, we'd use it
+    -- For now, we'll use a placeholder
+    p_AverageRating := 4.5; -- Placeholder value
+    
+    -- In a real implementation with a ratings table:
+    /*
+    SELECT AVG(Rating)
+    INTO p_AverageRating
+    FROM ProductRatings pr
+    JOIN Products p ON pr.ProductID = p.ProductID
+    WHERE p.SupplierID = p_SupplierID;
+    */
+END GetSupplierAverageRating;
+/
+
+--Supplier Master--
+CREATE OR REPLACE PROCEDURE GetSupplierName (
+    p_supplierId IN VARCHAR2,
+    p_supplierName OUT VARCHAR2
+) AS
+BEGIN
+    SELECT FirstName INTO p_supplierName
+    FROM Suppliers
+    WHERE SupplierID = p_supplierId;
+END;
+/
+
+
+--Customer review--
+CREATE OR REPLACE FUNCTION fn_GetAllProducts(
+    p_SupplierID IN NUMBER
+) RETURN SYS_REFCURSOR
+AS
+    v_cursor SYS_REFCURSOR;
+BEGIN
+    OPEN v_cursor FOR
+        SELECT p.ProductID, p.ProductName, p.CategoryID, c.CategoryName, 
+               p.Description, p.Price, p.QuantityAvailable, p.IsActive, 
+               p.IsFeatured, p.ImageURL
+        FROM Products p
+        JOIN Categories c ON p.CategoryID = c.CategoryID
+        WHERE p.SupplierID = p_SupplierID
+        ORDER BY p.ProductID DESC;
+
+    RETURN v_cursor;
+END fn_GetAllProducts;
+/
+
+CREATE OR REPLACE FUNCTION fn_GetSupplierProducts(
+    p_SupplierID IN NUMBER
+) RETURN SYS_REFCURSOR
+AS
+    v_cursor SYS_REFCURSOR;
+BEGIN
+    OPEN v_cursor FOR
+        SELECT p.ProductID, p.ProductName, p.Description, p.Price, p.ImageURL
+        FROM Products p
+        WHERE p.SupplierID = p_SupplierID
+        AND p.IsActive = 1
+        ORDER BY p.ProductName;
+    
+    RETURN v_cursor;
+END fn_GetSupplierProducts;
+/
+
+-- Function to get product by ID for a specific supplier
+-- (This procedure helps validate if a product belongs to the supplier)
+CREATE OR REPLACE FUNCTION fn_GetSupplierProductById(
+    p_SupplierID IN NUMBER,
+    p_ProductID IN NUMBER
+) RETURN SYS_REFCURSOR
+AS
+    v_cursor SYS_REFCURSOR;
+BEGIN
+    OPEN v_cursor FOR
+        SELECT p.ProductID, p.ProductName, p.Description, p.Price, p.ImageURL
+        FROM Products p
+        WHERE p.SupplierID = p_SupplierID
+        AND p.ProductID = p_ProductID;
+    
+    RETURN v_cursor;
+END fn_GetSupplierProductById;
+/
