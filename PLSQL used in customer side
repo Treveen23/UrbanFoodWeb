@@ -1,0 +1,588 @@
+--Register Page--
+CREATE OR REPLACE PROCEDURE SignupCustomer(
+    pFirstName IN VARCHAR2,
+    pLastName IN VARCHAR2,
+    pEmail IN VARCHAR2,
+    pPhoneNumber IN VARCHAR2,
+    pPassword IN VARCHAR2,
+    pAddress IN VARCHAR2,
+    pDietaryPreference IN VARCHAR2,
+    pCustomerID OUT NUMBER
+) AS
+    vCount NUMBER;
+BEGIN
+    -- Check if email or phone already exists
+    SELECT COUNT(*)
+    INTO vCount
+    FROM CUSTOMERS
+    WHERE LOWER(Email) = LOWER(pEmail)
+       OR PhoneNumber = pPhoneNumber;
+
+    IF vCount > 0 THEN
+        RAISE_APPLICATION_ERROR(-20001, 'A customer with the same Email or Phone already exists.');
+    END IF;
+
+    -- Insert new customer record
+    INSERT INTO CUSTOMERS (FirstName, LastName, Email, PhoneNumber, Password, Address, DietaryPreference)
+    VALUES (pFirstName, pLastName, LOWER(pEmail), pPhoneNumber, pPassword, pAddress, pDietaryPreference)
+    RETURNING CustomerID INTO pCustomerID;
+
+    COMMIT;
+END SignupCustomer;
+/
+
+-- Procedure to insert a new supplier
+CREATE OR REPLACE PROCEDURE SignupSupplier(
+    pFirstName IN VARCHAR2,
+    pLastName IN VARCHAR2,
+    pEmail IN VARCHAR2,
+    pPhoneNumber IN VARCHAR2,
+    pPassword IN VARCHAR2,
+    pAddress IN VARCHAR2,
+    pBusinessName IN VARCHAR2,
+    pBusinessType IN VARCHAR2,
+    pSupplierID OUT NUMBER
+) AS
+    vCount NUMBER;
+BEGIN
+    -- Check if email or phone already exists
+    SELECT COUNT(*)
+    INTO vCount
+    FROM SUPPLIERS
+    WHERE LOWER(Email) = LOWER(pEmail)
+       OR PhoneNumber = pPhoneNumber;
+
+    IF vCount > 0 THEN
+        RAISE_APPLICATION_ERROR(-20002, 'A supplier with the same Email or Phone already exists.');
+    END IF;
+
+    -- Insert new supplier record
+    INSERT INTO SUPPLIERS (FirstName, LastName, Email, PhoneNumber, Password, Address, BusinessName, BusinessType)
+    VALUES (pFirstName, pLastName, LOWER(pEmail), pPhoneNumber, pPassword, pAddress, pBusinessName, pBusinessType)
+    RETURNING SupplierID INTO pSupplierID;
+
+    COMMIT;
+END SignupSupplier;
+/
+
+
+
+-- Login Page--
+CREATE OR REPLACE PROCEDURE LoginUser(
+    pEmail IN VARCHAR2,
+    pPassword IN VARCHAR2,
+    pUserID OUT NUMBER,
+    pUserRole OUT VARCHAR2
+) AS
+BEGIN
+    -- Try to find the user in CUSTOMERS table
+    BEGIN
+        SELECT CustomerID, 'Customer'
+        INTO pUserID, pUserRole
+        FROM CUSTOMERS
+        WHERE LOWER(Email) = LOWER(pEmail) 
+          AND Password = pPassword;
+
+        RETURN; -- Exit if found
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN 
+            NULL; -- Continue to check SUPPLIERS table
+    END;
+
+    -- Try to find the user in SUPPLIERS table
+    BEGIN
+        SELECT SupplierID, 'Supplier'
+        INTO pUserID, pUserRole
+        FROM SUPPLIERS
+        WHERE LOWER(Email) = LOWER(pEmail) 
+          AND Password = pPassword;
+
+        RETURN; -- Exit if found
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            pUserID := NULL;
+            pUserRole := NULL;
+            RAISE_APPLICATION_ERROR(-20003, 'Invalid email or password.');
+    END;
+END LoginUser;
+/
+
+
+--Customer Profile--
+CREATE OR REPLACE PROCEDURE GET_CUSTOMER_PROFILE (
+    p_customer_id IN NUMBER,
+    p_cursor OUT SYS_REFCURSOR
+) AS
+BEGIN
+    OPEN p_cursor FOR
+        SELECT FirstName, LastName, Email, PhoneNumber, Password, Address, DietaryPreference
+        FROM CUSTOMERS
+        WHERE CustomerID = p_customer_id;
+END;
+/
+
+--update customer profile--
+CREATE OR REPLACE PROCEDURE UPDATE_CUSTOMER_PROFILE (
+   p_customer_id IN NUMBER,
+    p_firstname IN VARCHAR2,
+    p_lastname IN VARCHAR2,
+    p_phone IN VARCHAR2,
+    p_password IN VARCHAR2,
+    p_address IN VARCHAR2,
+    p_diet IN VARCHAR2
+) AS
+BEGIN
+    UPDATE CUSTOMERS
+    SET
+        FirstName = p_firstname,
+        LastName = p_lastname,
+        PhoneNumber = p_phone,
+        Password = p_password,
+        Address = p_address,
+        DietaryPreference = p_diet
+    WHERE CustomerID = p_customer_id;
+END;
+/
+
+
+--Home Page--
+CREATE OR REPLACE PROCEDURE get_customer_firstname_by_id (
+    p_cust_id IN NUMBER,
+    p_first_name OUT VARCHAR2
+)
+IS
+BEGIN
+    SELECT FirstName INTO p_first_name
+    FROM Customers
+    WHERE CustomerID = p_cust_id;
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        p_first_name := 'Guest';
+END;
+
+-- Procedure to get all active categories
+CREATE OR REPLACE PROCEDURE GET_ACTIVE_CATEGORIES(p_result OUT SYS_REFCURSOR) 
+IS
+BEGIN
+    OPEN p_result FOR
+        SELECT CategoryId, CategoryName, Description, ImagePath
+        FROM Categories
+        WHERE IsActive = 1
+        ORDER BY CategoryName;
+END GET_ACTIVE_CATEGORIES;
+/
+
+-- Procedure to get active products (optionally filtered by category)
+CREATE OR REPLACE PROCEDURE GET_ACTIVE_PRODUCTS(
+    p_category_id IN NUMBER DEFAULT NULL,
+    p_result OUT SYS_REFCURSOR
+) 
+IS
+BEGIN
+    OPEN p_result FOR
+        SELECT 
+            p.ProductID, 
+            p.ProductName, 
+            p.Description, 
+            p.Price, 
+            p.QuantityAvailable,
+            p.ImageURL,
+            c.CategoryName,
+            p.CategoryID
+        FROM Products p
+        INNER JOIN Categories c ON p.CategoryID = c.CategoryID
+        WHERE p.IsActive = 1
+        AND (p_category_id IS NULL OR p.CategoryID = p_category_id)
+        ORDER BY p.ProductName;
+END GET_ACTIVE_PRODUCTS;
+/
+
+
+--Shop Page--
+CREATE OR REPLACE PROCEDURE GetCategories (p_cursor OUT SYS_REFCURSOR)
+AS
+BEGIN
+    OPEN p_cursor FOR
+    SELECT 
+        CategoryID,
+        CategoryName,
+        (SELECT COUNT(*) FROM Products WHERE Products.CategoryID = Categories.CategoryID) AS ProductCount
+    FROM Categories;
+END;
+
+CREATE OR REPLACE PROCEDURE GetProductsByCategory (p_categoryId IN NUMBER, p_cursor OUT SYS_REFCURSOR)
+AS
+BEGIN
+    OPEN p_cursor FOR
+    SELECT 
+        ProductID,
+        ProductName,
+        Description,
+        Price,
+        ImageURL
+    FROM Products
+    WHERE CategoryID = p_categoryId;
+END;
+
+CREATE OR REPLACE PROCEDURE GetProducts (p_cursor OUT SYS_REFCURSOR)
+AS
+BEGIN
+    -- Open the cursor with a structured query
+    OPEN p_cursor FOR
+    SELECT 
+        ProductName, 
+        Description, 
+        Price, 
+        ImageURL
+    FROM Products;
+EXCEPTION
+    WHEN OTHERS THEN
+        -- Handle unexpected errors gracefully
+        RAISE_APPLICATION_ERROR(-20001, 'An error occurred while fetching products: ' || SQLERRM);
+END;
+/
+
+CREATE OR REPLACE PROCEDURE GetProducts (p_cursor OUT SYS_REFCURSOR)
+AS
+BEGIN
+    -- Open the cursor with a structured query
+    OPEN p_cursor FOR
+    SELECT 
+        ProductID,  -- Added this line to include the product ID
+        ProductName, 
+        Description, 
+        Price, 
+        ImageURL
+    FROM Products;
+EXCEPTION
+    WHEN OTHERS THEN
+        -- Handle unexpected errors gracefully
+        RAISE_APPLICATION_ERROR(-20001, 'An error occurred while fetching products: ' || SQLERRM);
+END;
+/
+
+
+--Shop Details--
+--Function--
+CREATE OR REPLACE FUNCTION fn_GetProductByID(
+    p_ProductID IN NUMBER
+) RETURN SYS_REFCURSOR
+AS
+    v_cursor SYS_REFCURSOR;
+BEGIN
+    OPEN v_cursor FOR
+        SELECT p.ProductID, p.ProductName, p.CategoryID, c.CategoryName, 
+               p.Description, p.Price, p.QuantityAvailable, p.IsActive, 
+               p.IsFeatured, p.ImageURL
+        FROM Products p
+        JOIN Categories c ON p.CategoryID = c.CategoryID
+        WHERE p.ProductID = p_ProductID;
+
+    RETURN v_cursor;
+END fn_GetProductByID;
+/
+
+
+--Cart--
+CREATE OR REPLACE PROCEDURE AddToCart(
+    p_CustomerID IN NUMBER,
+    p_ProductID IN NUMBER,
+    p_Quantity IN NUMBER DEFAULT 1
+)
+AS
+    v_count NUMBER;
+BEGIN
+    -- Check if the product already exists in the cart
+    SELECT COUNT(*) INTO v_count 
+    FROM ShoppingCart 
+    WHERE CustomerID = p_CustomerID AND ProductID = p_ProductID;
+    
+    IF v_count > 0 THEN
+        -- Update quantity if product exists
+        UPDATE ShoppingCart 
+        SET Quantity = Quantity + p_Quantity 
+        WHERE CustomerID = p_CustomerID AND ProductID = p_ProductID;
+    ELSE
+        -- Insert new cart item
+        INSERT INTO ShoppingCart(CartID, CustomerID, ProductID, Quantity)
+        VALUES(cart_seq.NEXTVAL, p_CustomerID, p_ProductID, p_Quantity);
+    END IF;
+    
+    COMMIT;
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK;
+        RAISE;
+END AddToCart;
+/
+
+CREATE OR REPLACE PROCEDURE update_cart_quantity(
+    p_customer_id IN NUMBER,
+    p_product_id IN NUMBER,
+    p_quantity IN NUMBER
+)
+AS
+BEGIN
+    UPDATE ShoppingCart 
+    SET Quantity = p_quantity 
+    WHERE CustomerID = p_customer_id 
+    AND ProductID = p_product_id;
+    
+    COMMIT;
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK;
+        RAISE;
+END update_cart_quantity;
+/
+
+-- Remove From Cart Procedure
+CREATE OR REPLACE PROCEDURE RemoveFromCart(
+    p_CustomerID IN NUMBER,
+    p_ProductID IN NUMBER
+)
+AS
+BEGIN
+    DELETE FROM ShoppingCart 
+    WHERE CustomerID = p_CustomerID AND ProductID = p_ProductID;
+    
+    COMMIT;
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK;
+        RAISE;
+END RemoveFromCart;
+/
+
+
+--Check out--
+-- Get Cart Items Procedure
+CREATE OR REPLACE PROCEDURE GetCartItems(
+    p_CustomerID IN NUMBER,
+    p_Cursor OUT SYS_REFCURSOR
+)
+AS
+BEGIN
+    OPEN p_Cursor FOR
+        SELECT c.CartID, c.ProductID, c.Quantity, p.ProductName, 
+               p.Price, p.ImageURL, p.Description,
+               (p.Price * c.Quantity) AS TotalPrice
+        FROM ShoppingCart c
+        JOIN Products p ON c.ProductID = p.ProductID
+        WHERE c.CustomerID = p_CustomerID
+        ORDER BY c.DateAdded DESC;
+END GetCartItems;
+/
+
+
+CREATE OR REPLACE PROCEDURE CreateOrder(
+    p_CustomerID IN NUMBER,
+    p_ShippingAddress IN VARCHAR2,
+    p_BillingAddress IN VARCHAR2,
+    p_Subtotal IN NUMBER,
+    p_ShippingCost IN NUMBER,
+    p_TotalAmount IN NUMBER,
+    p_PaymentMethod IN VARCHAR2,
+    p_OrderID OUT NUMBER
+)
+AS
+BEGIN
+    -- Insert new order
+    INSERT INTO Orders (
+        OrderID, CustomerID, OrderDate, ShippingAddress, BillingAddress,
+        Subtotal, ShippingCost, TotalAmount, PaymentMethod, OrderStatus
+    ) VALUES (
+        order_seq.NEXTVAL, p_CustomerID, SYSDATE, p_ShippingAddress, p_BillingAddress,
+        p_Subtotal, p_ShippingCost, p_TotalAmount, p_PaymentMethod, 'Pending'
+    ) RETURNING OrderID INTO p_OrderID;
+    
+    COMMIT;
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK;
+        p_OrderID := 0;
+        RAISE;
+END CreateOrder;
+/
+
+CREATE OR REPLACE PROCEDURE MoveCartItemsToOrder(
+    p_CustomerID IN NUMBER,
+    p_OrderID IN NUMBER,
+    p_Success OUT NUMBER
+)
+AS
+    v_count NUMBER;
+BEGIN
+    p_Success := 0;
+    
+    -- Check if the order exists
+    SELECT COUNT(*) INTO v_count FROM Orders WHERE OrderID = p_OrderID AND CustomerID = p_CustomerID;
+    
+    IF v_count > 0 THEN
+        -- Insert cart items as order items
+        INSERT INTO OrderItems (OrderItemID, OrderID, ProductID, Quantity, Price)
+        SELECT orderitem_seq.NEXTVAL, p_OrderID, c.ProductID, c.Quantity, p.Price
+        FROM ShoppingCart c
+        JOIN Products p ON c.ProductID = p.ProductID
+        WHERE c.CustomerID = p_CustomerID;
+        
+        COMMIT;
+        p_Success := 1;
+    END IF;
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK;
+        p_Success := 0;
+        RAISE;
+END MoveCartItemsToOrder;
+/
+
+-- ClearCart Procedure
+CREATE OR REPLACE PROCEDURE ClearCart(
+    p_CustomerID IN NUMBER
+)
+AS
+BEGIN
+    DELETE FROM ShoppingCart WHERE CustomerID = p_CustomerID;
+    COMMIT;
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK;
+        RAISE;
+END ClearCart;
+/
+
+CREATE OR REPLACE PROCEDURE GetCustomerProfile(
+    p_CustomerID IN NUMBER,
+    p_Cursor OUT SYS_REFCURSOR
+)
+AS
+BEGIN
+    OPEN p_Cursor FOR
+        SELECT CustomerID, FirstName, LastName, Email, PhoneNumber, Address
+        FROM Customers
+        WHERE CustomerID = p_CustomerID;
+END GetCustomerProfile;
+/
+
+-- GetOrderDetails Procedure
+CREATE OR REPLACE PROCEDURE GetOrderDetails(
+    p_OrderID IN NUMBER,
+    p_CustomerID IN NUMBER,
+    p_Cursor OUT SYS_REFCURSOR
+)
+AS
+BEGIN
+    OPEN p_Cursor FOR
+        SELECT o.OrderID, o.OrderDate, o.ShippingAddress, o.BillingAddress,
+               o.Subtotal, o.ShippingCost, o.TotalAmount, o.PaymentMethod, o.OrderStatus,
+               c.Email AS Email
+        FROM Orders o
+        JOIN Customers c ON o.CustomerID = c.CustomerID
+        WHERE o.OrderID = p_OrderID AND o.CustomerID = p_CustomerID;
+END GetOrderDetails;
+/
+
+
+--Order Confirmation Page--
+-- GetOrderDetails Procedure
+CREATE OR REPLACE PROCEDURE GetOrderDetails(
+    p_OrderID IN NUMBER,
+    p_CustomerID IN NUMBER,
+    p_Cursor OUT SYS_REFCURSOR
+)
+AS
+BEGIN
+    OPEN p_Cursor FOR
+        SELECT o.OrderID, o.OrderDate, o.ShippingAddress, o.BillingAddress,
+               o.Subtotal, o.ShippingCost, o.TotalAmount, o.PaymentMethod, o.OrderStatus,
+               c.Email AS Email
+        FROM Orders o
+        JOIN Customers c ON o.CustomerID = c.CustomerID
+        WHERE o.OrderID = p_OrderID AND o.CustomerID = p_CustomerID;
+END GetOrderDetails;
+/
+
+
+--Customer Orders page--
+-- Procedure to get all orders for a customer
+CREATE OR REPLACE PROCEDURE GetCustomerOrdersCustomer (
+    p_CustomerID IN NUMBER,
+    p_Cursor OUT SYS_REFCURSOR
+)
+AS
+BEGIN
+    OPEN p_Cursor FOR
+        SELECT o.OrderID, o.OrderDate, o.TotalAmount, o.OrderStatus,
+               d.DeliveryID, d.DeliveryDate, d.Status AS DeliveryStatus, d.Notes
+        FROM Orders o
+        LEFT JOIN Deliveries d ON o.OrderID = d.OrderID
+        WHERE o.CustomerID = p_CustomerID
+        ORDER BY o.OrderDate DESC;
+END GetCustomerOrdersCustomer;
+/
+
+-- Procedure to get detailed items for a specific order
+CREATE OR REPLACE PROCEDURE GetOrderItemsCustomer (
+    p_OrderID IN NUMBER,
+    p_Cursor OUT SYS_REFCURSOR
+)
+AS
+BEGIN
+    OPEN p_Cursor FOR
+        SELECT oi.OrderItemID, oi.ProductID, p.ProductName, 
+               oi.Quantity, oi.Price, (oi.Quantity * oi.Price) AS ItemTotal
+        FROM OrderItems oi
+        JOIN Products p ON oi.ProductID = p.ProductID
+        WHERE oi.OrderID = p_OrderID;
+END GetOrderItemsCustomer;
+/
+
+-- Procedure to cancel/remove an order
+CREATE OR REPLACE PROCEDURE CancelOrderCustomer (
+    p_OrderID IN NUMBER,
+    p_CustomerID IN NUMBER,
+    p_Result OUT NUMBER
+)
+AS
+    v_count NUMBER;
+    v_status VARCHAR2(50);
+BEGIN
+    -- First verify the order belongs to this customer and check its status
+    SELECT COUNT(*), MAX(OrderStatus)
+    INTO v_count, v_status
+    FROM Orders
+    WHERE OrderID = p_OrderID AND CustomerID = p_CustomerID;
+    
+    IF v_count = 0 THEN
+        -- Order not found or doesn't belong to customer
+        p_Result := 0;
+        RETURN;
+    END IF;
+    
+    -- Only allow cancellation of pending orders
+    IF v_status = 'Pending' THEN
+        -- Update order status to Cancelled
+        UPDATE Orders
+        SET OrderStatus = 'Cancelled'
+        WHERE OrderID = p_OrderID;
+        
+        -- Update delivery status to Cancelled
+        UPDATE Deliveries
+        SET Status = 'Cancelled'
+        WHERE OrderID = p_OrderID;
+        
+        COMMIT;
+        p_Result := 1; -- Success
+    ELSE
+        -- Cannot cancel orders that are not in Pending status
+        p_Result := 2; -- Order in progress, cannot cancel
+    END IF;
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK;
+        p_Result := -1; -- Error
+END CancelOrderCustomer;
+/
+
+
